@@ -9,18 +9,18 @@
 #include <array>
 #include <memory> 
 #include <vector>
-#include <atomic>
+#include <map>
+#include <queue>
 
-class Server : public std::enable_shared_from_this<Server> {
+#include "Objects.hpp"
+
+class Server : public std::enable_shared_from_this<Server>{
 public:
 	bool init();
-	bool createAndConnectInstance();
-	DWORD waitForEvent();
-
 	void run();
 	void stop();
 
-	void workLoop();
+	
 
 	static VOID WINAPI completeWriteRoutine(DWORD dwErr, DWORD cbWritten,
 		LPOVERLAPPED lpOverLap);
@@ -28,7 +28,9 @@ public:
 		LPOVERLAPPED lpOverLap);
 
 private:
-
+	bool createAndConnectInstance();
+	DWORD waitForEvent();
+	void workLoop();
 	void removePipeInst(int id);
 	OVERLAPPED _connect;
 	HANDLE _pipe = INVALID_HANDLE_VALUE;
@@ -38,18 +40,30 @@ private:
 	static constexpr int BUFSIZE = 4096;
 	static constexpr int PIPE_TIMEOUT = 5000;
 	
+	using CustomObjPtr = std::unique_ptr<CustomObject>;
+
 	struct PipeInst {
 		OVERLAPPED overlap;
 		HANDLE pipeInst;
-		std::array<char, BUFSIZE> clientRequestBuffer;
 		DWORD cbRead;
-		std::array<char, BUFSIZE> serverResponseBuffer;
-		DWORD cbToWrite;
 
 		int id; 
 		std::shared_ptr<Server> owner;
+
+		static int _object_id;
 	};
 
+	struct ClientData {
+		std::map<int, CustomObjPtr> _objectsMap;
+		std::queue<std::string> _clientRequests;
+		std::queue<Command> _clientResponses;
+
+		std::array<char, BUFSIZE> clientRequestBuffer;
+		std::array<char, BUFSIZE> serverResponseBuffer;
+	};
+	std::map<int, ClientData> _clientsData;
+	void processClientRequest(PipeInst&);
+	int createNewObject(PipeInst& pipeInst, CustomObjectsType type);
 	struct PipeInstDeleter {
 		void operator()(PipeInst* p_inst) const;
 	};
@@ -61,9 +75,10 @@ private:
 	void completeWrite(PipeInst& pipeInst, DWORD dwErr, DWORD cbWritten);
 	void completeRead(PipeInst& pipeInst, DWORD dwErr, DWORD cbBytesRead);
 
-	void writeToClient(DWORD dwErr, DWORD cbWritten,
-		PipeInst& pipeInst);
-	void readFromClient(DWORD dwErr, DWORD cbBytesRead,
+	void writeToClient(
+		PipeInst& pipeInst,
+		const std::string& message);
+	void readFromClient(
 		PipeInst& pipeInst);
 
 	static int _connection_id;

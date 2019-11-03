@@ -1,13 +1,24 @@
 #include "Client.hpp"
-
+#include "Objects.hpp"
 #include <iostream>
+#include <fstream>
+#include <type_traits>
+
+#include <boost/archive/text_oarchive.hpp>
+#include <boost/archive/text_iarchive.hpp>
+#include <boost/serialization/serialization.hpp>
 
 static const LPTSTR PIPE_NAME = TEXT("\\\\.\\pipe\\mynamedpipe");
 #define BUFSIZE 512
 
+
+
 Client::~Client() {
 	if (_pipe != INVALID_HANDLE_VALUE) {
-		std::cout << "Close handler" << std::endl;
+		CloseHandle(_pipe);
+	}
+
+	if (_connectEvent != INVALID_HANDLE_VALUE) {
 		CloseHandle(_pipe);
 	}
 } 
@@ -15,20 +26,32 @@ Client::~Client() {
 bool Client::open(const std::string& pipe_name) {
 	LPSTR p_name = const_cast<char*>(pipe_name.c_str());
 
+	_connectEvent = CreateEvent(
+		NULL,    // default security attribute
+		TRUE,    // manual reset event 
+		TRUE,    // initial state = signaled 
+		NULL);   // unnamed event object 
+
+	if (_connectEvent == NULL)
+	{
+		printf("CreateEvent failed with %d.\n", GetLastError());
+		return false;
+	}
+
 	while (true)
 	{
 		_pipe = CreateFile(
 			p_name, 
-			GENERIC_READ | GENERIC_WRITE | FILE_FLAG_OVERLAPPED,
-			0,              // no sharing 
+			GENERIC_READ | GENERIC_WRITE,
+			FILE_SHARE_READ | FILE_SHARE_WRITE,             
 			NULL,           // default security attributes
 			OPEN_EXISTING,  // opens existing pipe 
-			0,              // default attributes 
+			FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
 			NULL);          // no template file 
  
 
 		if (_pipe != INVALID_HANDLE_VALUE)
-			return true;
+			break;
 
 		if (GetLastError() != ERROR_PIPE_BUSY)
 		{
@@ -43,24 +66,14 @@ bool Client::open(const std::string& pipe_name) {
 		}
 	}
 
+	return true;
 }
 
-bool Client::sent_data(const std::string& data) {
-	DWORD dwMode = PIPE_READMODE_MESSAGE;
-	BOOL fSuccess = SetNamedPipeHandleState(
-		_pipe,    
-		&dwMode,  
-		NULL,     // don't set maximum bytes 
-		NULL);    // don't set maximum time 
-	if (!fSuccess)
-	{
-		_tprintf(TEXT("SetNamedPipeHandleState failed. GLE=%d\n"), GetLastError());
-		return false;
-	}
+bool Client::send_sync(const std::string& data) {
 	LPTSTR lpvMessage = const_cast<char*>(data.c_str());
 	DWORD cbToWrite = (lstrlen(lpvMessage) + 1) * sizeof(TCHAR);
 	DWORD cbWritten;
-	fSuccess = WriteFile(
+	BOOL fSuccess = WriteFile(
 		_pipe,                  
 		lpvMessage,            
 		cbToWrite,              
@@ -81,8 +94,6 @@ bool Client::read_sync() {
 	DWORD  cbRead;
 	do
 	{
-		// Read from the pipe. 
-
 		fSuccess = ReadFile(
 			_pipe,    
 			chBuf,   
@@ -104,6 +115,140 @@ bool Client::read_sync() {
 	return true;
 }
 
+void Client::read_async() {
+	_pendingOPList.emplace_back(std::make_unique<PendingIOData>());
+	auto& d = _pendingOPList.back();
+	d->type = PendingIOType::READ;
+	d->ov.hEvent = _connectEvent;
+	BOOL bResult = ReadFile(_pipe,
+		d->_readBuffer.data(),
+		d->_readBuffer.size(),
+		&d->numBytes,
+		&d->ov);
+
+	if (!bResult) {
+		DWORD dwError = GetLastError();
+		switch (dwError) {
+		case ERROR_HANDLE_EOF:
+		{
+			std::cout << "ERROR happend" << std::endl;
+			break;
+		}
+		case ERROR_IO_PENDING:
+		{
+			std::cout << "Operation pending " << std::endl;
+			break;
+		}
+		case WAIT_OBJECT_0: {
+			std::cout << "Wait object io" << std::endl;
+			break;
+		}
+		default:
+			std::cout << "Error value" << std::endl;
+			break;
+		}
+	}
+	else {
+		std::cout << "Read file completed" << std::endl;
+	
+		std::string str(d->_readBuffer.begin(), d->_readBuffer.begin() + d->numBytes);
+		std::cout << str << std::endl;
+		d->complete = true;
+	}
+}
+void Client::send_async(const std::string& data) {
+	
+	LPTSTR lpvMessage = const_cast<char*>(data.c_str());
+	DWORD cbToWrite = (lstrlen(lpvMessage) + 1) * sizeof(TCHAR);
+	
+	_pendingOPList.emplace_back(std::make_unique<PendingIOData>());
+	auto& d = _pendingOPList.back();
+	d->type = PendingIOType::WRITE;
+	d->ov.hEvent = _connectEvent;
+	BOOL fSuccess = WriteFile(
+		_pipe,
+		lpvMessage,
+		cbToWrite,
+		&d->numBytes,
+		&d->ov);
+
+	
+	bool pending = true;
+	if (!fSuccess)
+	{
+		DWORD dwError = GetLastError();
+		switch (dwError) {
+			case ERROR_HANDLE_EOF:
+			{
+				std::cout << "ERROR happend" << std::endl;
+				break;
+			}
+			case ERROR_IO_PENDING:
+			{
+				std::cout << "Write operation pending " << std::endl;
+				break;
+			}
+			case WAIT_OBJECT_0: {
+				std::cout << "Wait object io" << std::endl;
+				break;
+			}
+		}
+	}
+	else {
+		d->complete = true;
+		std::cout << "Write file completed" << std::endl;
+	}
+}
+
+void Client::checkPendingIO(PendingIODataPtr& d) {
+	BOOL bResult = GetOverlappedResult(_pipe,
+		&d->ov,
+		&d->numBytes,
+		FALSE);
+
+	DWORD dwError;
+	if (!bResult)
+	{
+		switch (dwError = GetLastError())
+		{
+		case ERROR_IO_INCOMPLETE:
+		{
+			// Operation is still pending, allow while loop
+			// to loop again after printing a little progress.
+			std::cout << "Operation is still pending " << std::endl;
+			break;
+		}
+		default:
+		{
+			std::cout << "GetOverlapped result " << dwError << std::endl;
+			break;
+		}
+		}
+	}
+	else {
+		std::cout << "Operation complete " << std::endl;
+		if (d->type == PendingIOType::READ) {
+			std::cout << "Read operation" << std::endl;
+			std::string str(d->_readBuffer.begin(), d->_readBuffer.begin() + d->numBytes);
+			std::cout << str << std::endl;
+		}
+		// Manual-reset event should be reset since it is now signaled.
+
+		ResetEvent(d->ov.hEvent);
+		d->complete = true;
+	}
+
+}
+void Client::checkPendingOperaions() {
+	for (auto& op : _pendingOPList) {
+		checkPendingIO(op);
+	}
+
+	_pendingOPList.erase(std::remove_if(_pendingOPList.begin(), _pendingOPList.end(), [](const PendingIODataPtr& d) {
+		return d->complete;
+		}), _pendingOPList.end());
+}
+
 int _tmain(int argc, TCHAR* argv[])
 {
 	Client client;
@@ -115,23 +260,43 @@ int _tmain(int argc, TCHAR* argv[])
 	bool run = true;
 	while (run) {
 
-
 		std::cout << "Choose option" << std::endl;
 		std::cout << "q - quite" << std::endl;
 		std::cout << "s - send message to server " << std::endl;
+		std::cout << "r - read message from server " << std::endl;
+		std::cout << "c - create object in server " << std::endl;
+		std::cout << "p - pending io " << std::endl;
 
 		int c = _getch();
 		switch (c) {
 		case 'q': run = false;
 			break;
 		case 's': {
-			if (!client.sent_data("Hello world"))
-				std::cout << "Failed to sent data" << std::endl;
-			client.read_sync();
+			client.send_async("Hello world");	
+			client.send_async_(30.0);
 			break;
 		}
+		case 'r': {
+			client.read_async();
+			break;
+		}
+		case 'c': {
+			struct Command cmd = {GET_OBJECT, CUSTOM_TYPE_2, 0};
+			std::string buffer;
+			serializeCommand(cmd, buffer);
+			client.send_async(buffer);
+			break;
+		} case 'p': {
+			client.checkPendingOperaions();
+			break;
+		}
+		default:
+			std::cout << "Unknown operation" << std::endl;
+			break;
 		}
 
+		
 	}
 	return 0;
 }
+
