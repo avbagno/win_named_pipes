@@ -130,7 +130,13 @@ void Server::workLoop() {
 				Command cmd = p.second._clientResponses.front();
 				std::string out;
 				serializeCommand(cmd, out);
-				//writeToClient(*p, out);
+				int id = p.first;
+				auto pipe = std::find_if(_pipeinst_list.begin(), _pipeinst_list.end(), [id](const auto& p) {
+					return p->id == id;
+					});
+				if (pipe != _pipeinst_list.end()) {
+					writeToClient(**pipe, out);
+				}
 				p.second._clientResponses.pop();
 			}
 		}
@@ -234,6 +240,7 @@ void Server::readFromClient(
 
 void Server::completeWrite(PipeInst& pipeInst, DWORD dwErr, DWORD cbWritten) {
 	if (dwErr != 0) {
+		std::cout << "Remove pipe" << std::endl;
 		removePipeInst(pipeInst.id);
 	}
 }
