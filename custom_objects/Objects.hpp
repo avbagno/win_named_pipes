@@ -24,6 +24,21 @@ enum CommandType {
 	ACK_FAIL
 };
 
+
+inline const char* cmdTypeToString(CommandType t)
+{
+	switch (t)
+	{
+	case CREATE_OBJECT:   return "CREATE_OBJECT";
+	case GET_OBJECT:   return "GET_OBJECT";
+	case GET_OBJECT_MEMBER: return "GET_OBJECT_MEMBER";
+	case ACK_OK: return "ACK_OK";
+	case ACK_FAIL: return "ACK_FAIL";
+	default:      return "[Unknow]";
+	}
+}
+
+
 struct Command {
 	CommandType cmd;
 
@@ -44,6 +59,8 @@ struct Command {
 
 void serializeCommand(Command& cmd, std::string& out); 
 Command deserializeCommand(const std::string& in);
+
+void deserialize(const std::string& in, std::vector<Command>& out);
 
 class CustomObject {
 public:

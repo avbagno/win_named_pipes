@@ -28,6 +28,7 @@ public:
 		send_async(std::to_string(data));
 	}
 
+	void processServerResponse(const std::string& str);
 private:
 	enum class PendingIOType {
 		READ,

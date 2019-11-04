@@ -129,33 +129,32 @@ void Client::read_async() {
 	if (!bResult) {
 		DWORD dwError = GetLastError();
 		switch (dwError) {
-		case ERROR_HANDLE_EOF:
-		{
-			std::cout << "ERROR happend" << std::endl;
-			break;
-		}
 		case ERROR_IO_PENDING:
 		{
-			std::cout << "Operation pending " << std::endl;
-			break;
-		}
-		case WAIT_OBJECT_0: {
-			std::cout << "Wait object io" << std::endl;
+			std::cout << "Read operation is pending " << std::endl;
 			break;
 		}
 		default:
-			std::cout << "Error value" << std::endl;
 			break;
 		}
 	}
 	else {
-		std::cout << "Read file completed" << std::endl;
-	
 		std::string str(d->_readBuffer.begin(), d->_readBuffer.begin() + d->numBytes);
-		std::cout << str << std::endl;
+		processServerResponse(str);
 		d->complete = true;
 	}
 }
+
+void Client::processServerResponse(const std::string& res) {
+	std::cout << "Server response " << res << std::endl;
+
+	std::vector<Command> cmds;
+	deserialize(res, cmds);
+	for (auto& c : cmds) {
+		std::cout << cmdTypeToString(c.cmd) << std::endl;
+	}
+}
+
 void Client::send_async(const std::string& data) {
 	
 	LPTSTR lpvMessage = const_cast<char*>(data.c_str());
@@ -178,25 +177,18 @@ void Client::send_async(const std::string& data) {
 	{
 		DWORD dwError = GetLastError();
 		switch (dwError) {
-			case ERROR_HANDLE_EOF:
-			{
-				std::cout << "ERROR happend" << std::endl;
-				break;
-			}
 			case ERROR_IO_PENDING:
 			{
-				std::cout << "Write operation pending " << std::endl;
+				std::cout << "Write operation is pending " << std::endl;
 				break;
 			}
-			case WAIT_OBJECT_0: {
-				std::cout << "Wait object io" << std::endl;
+			default:
 				break;
-			}
 		}
 	}
 	else {
 		d->complete = true;
-		std::cout << "Write file completed" << std::endl;
+		std::cout << "Write operation completed" << std::endl;
 	}
 }
 
@@ -213,28 +205,20 @@ void Client::checkPendingIO(PendingIODataPtr& d) {
 		{
 		case ERROR_IO_INCOMPLETE:
 		{
-			// Operation is still pending, allow while loop
-			// to loop again after printing a little progress.
 			std::cout << "Operation is still pending " << std::endl;
 			break;
 		}
 		default:
-		{
-			std::cout << "GetOverlapped result " << dwError << std::endl;
 			break;
-		}
 		}
 	}
 	else {
-		std::cout << "Operation complete " << std::endl;
+		std::cout << "Operation completed " << std::endl;
 		if (d->type == PendingIOType::READ) {
-			std::cout << "Read operation" << std::endl;
 			std::string str(d->_readBuffer.begin(), d->_readBuffer.begin() + d->numBytes);
-			std::cout << str << std::endl;
+			processServerResponse(str);
 		}
-		// Manual-reset event should be reset since it is now signaled.
-
-		ResetEvent(d->ov.hEvent);
+		//ResetEvent(d->ov.hEvent);
 		d->complete = true;
 	}
 
@@ -265,7 +249,7 @@ int _tmain(int argc, TCHAR* argv[])
 		std::cout << "s - send message to server " << std::endl;
 		std::cout << "r - read message from server " << std::endl;
 		std::cout << "c - create object in server " << std::endl;
-		std::cout << "p - pending io " << std::endl;
+		std::cout << "p - check pending io " << std::endl;
 
 		int c = _getch();
 		switch (c) {
@@ -281,7 +265,7 @@ int _tmain(int argc, TCHAR* argv[])
 			break;
 		}
 		case 'c': {
-			struct Command cmd = {GET_OBJECT, CUSTOM_TYPE_2, 0};
+			struct Command cmd = {CREATE_OBJECT, CUSTOM_TYPE_1, 0};
 			std::string buffer;
 			serializeCommand(cmd, buffer);
 			client.send_async(buffer);
@@ -294,8 +278,6 @@ int _tmain(int argc, TCHAR* argv[])
 			std::cout << "Unknown operation" << std::endl;
 			break;
 		}
-
-		
 	}
 	return 0;
 }
