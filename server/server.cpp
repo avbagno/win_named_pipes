@@ -121,19 +121,16 @@ void Server::workLoop() {
 	bool pendingIO = createAndConnectInstance();
 	while (_running) {
 		
-		LOG_INFO << "1";
-		//try get something from client
+		//try to get something from client
 		for (auto& p : _pipeinst_list) {
 			readFromClient(*p);
 		}
 
-		LOG_INFO << "2";
 		//check client request
 		for (auto& p : _pipeinst_list) {
 			processClientRequest(*p);
 		}
 
-		LOG_INFO << "3";
 		//send responses 
 		for (auto& p : _clientsData) {
 			while(!p.second._clientResponses.empty()) {
@@ -149,9 +146,8 @@ void Server::workLoop() {
 			}
 		}
 
-		std::cout << "Wait for event " << std::endl;
+		LOG_INFO << "Wait for event ";
 		DWORD dwWait = waitForEvent();
-		LOG_INFO << "4";
 		switch (dwWait)
 		{
 		case WAIT_OBJECT_0:
@@ -173,7 +169,7 @@ void Server::workLoop() {
 
 			PipeInst* v = (PipeInst*)GlobalAlloc(GPTR, sizeof(PipeInst));
 			if (v == NULL) {
-				std::cout << "Failed to allocate memory";
+				LOG_ERROR << "Failed to allocate memory";
 				return;
 			}
 			_pipeinst_list.emplace_back(t_pipeinst_ptr(v));
@@ -202,7 +198,7 @@ void Server::workLoop() {
 }
 
 void Server::removePipeInst(int id) {
-	std::cout << "Remove pipe inst with id " << id << std::endl;
+	LOG_INFO << "Remove pipe inst with id ";
 	_pipeinst_list.erase(std::remove_if(_pipeinst_list.begin(), _pipeinst_list.end(), [id](const auto& inst) {
 		return inst->id == id;
 		}),
@@ -249,7 +245,6 @@ void Server::readFromClient(
 
 void Server::completeWrite(PipeInst& pipeInst, DWORD dwErr, DWORD cbWritten) {
 	if (dwErr != 0) {
-		std::cout << "Remove pipe" << std::endl;
 		removePipeInst(pipeInst.id);
 	}
 }
@@ -277,7 +272,7 @@ int Server::createNewObject(ClientData& cdata, CustomObjectsType type) {
 	case CUSTOM_TYPE_2:
 		obj.reset(new CustomObject2());
 	default:
-		std::cout << "Unknown object type" << std::endl;
+		LOG_ERROR << "Unknown object type" << std::endl;
 		break;
 	}
 
@@ -295,12 +290,12 @@ void Server::processCommand(ClientData& clientData, const Command cmd) {
 	case CREATE_OBJECT: {
 		int id = createNewObject(clientData, cmd.objType);
 		if (id >= 0) {
-			std::cout << "New object created, id " << id << std::endl;
+			LOG_ERROR << "New object created, id " << id;
 			response.res = ACK_OK;
 			response.objId = id;
 		}
 		else {
-			std::cout << "Couldn't create new object" << std::endl;
+			LOG_ERROR << "Couldn't create new object";
 		}
 		break;
 	}
@@ -325,7 +320,7 @@ void Server::processCommand(ClientData& clientData, const Command cmd) {
 		break;
 	}
 	default:
-		std::cout << "Unknown command" << std::endl;
+		LOG_ERROR << "Unknown command";
 		break;
 	}
 	std::string out;
@@ -338,14 +333,14 @@ void Server::processCommand(ClientData& clientData, const Command cmd) {
 void Server::processClientRequest(PipeInst& p) {
 	auto it = _clientsData.find(p.id);
 	if (it == _clientsData.end()) {
-		std::cout << "Unknown id" << std::endl;
+		LOG_ERROR << "Unknown id";
 		return;
 	}
 	ClientData& clientData = it->second;
 	while (!clientData._clientRequests.empty()) {
 		std::string req = clientData._clientRequests.front();
 		clientData._clientRequests.pop();
-		std::cout << "Client requests " << req << std::endl;
+		LOG_INFO << "Client requests " << req;
 		std::vector<Command> cmds;
 		deserialize(req, cmds);
 

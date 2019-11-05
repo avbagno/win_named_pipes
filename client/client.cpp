@@ -126,7 +126,7 @@ void Client::read_async() {
 		switch (dwError) {
 		case ERROR_IO_PENDING:
 		{
-			std::cout << "Read operation is pending " << std::endl;
+			LOG_INFO << "Read operation is pending ";
 			break;
 		}
 		default:
@@ -221,7 +221,7 @@ void Client::checkPendingIO(PendingIODataPtr& d) {
 		{
 		case ERROR_IO_INCOMPLETE:
 		{
-			std::cout << "Operation is still pending " << std::endl;
+			LOG_INFO << "Operation is still pending ";
 			break;
 		}
 		default:
@@ -229,7 +229,7 @@ void Client::checkPendingIO(PendingIODataPtr& d) {
 		}
 	}
 	else {
-		std::cout << "Operation completed " << std::endl;
+		LOG_INFO << "Operation completed ";
 		if (d->type == PendingIOType::READ) {
 			std::string str(d->_readBuffer.begin(), d->_readBuffer.begin() + d->numBytes);
 			processServerResponse(str);
@@ -355,7 +355,7 @@ int _tmain(int argc, TCHAR* argv[])
 			break;
 		}
 		default:
-			std::cout << "Unknown operation" << std::endl;
+			LOG_ERROR << "Unknown operation";
 			break;
 		}
 	}
