@@ -1,17 +1,12 @@
 #include "Client.hpp"
-#include "Objects.hpp"
 #include <iostream>
 #include <fstream>
 #include <type_traits>
+#include "../common/logging.hpp"
 
-#include <boost/archive/text_oarchive.hpp>
-#include <boost/archive/text_iarchive.hpp>
-#include <boost/serialization/serialization.hpp>
 
 static const LPTSTR PIPE_NAME = TEXT("\\\\.\\pipe\\mynamedpipe");
 #define BUFSIZE 512
-
-
 
 Client::~Client() {
 	if (_pipe != INVALID_HANDLE_VALUE) {
@@ -146,12 +141,33 @@ void Client::read_async() {
 }
 
 void Client::processServerResponse(const std::string& res) {
-	std::cout << "Server response " << res << std::endl;
+	LOG_INFO << "Server response " << res;
 
 	std::vector<Command> cmds;
 	deserialize(res, cmds);
 	for (auto& c : cmds) {
-		std::cout << cmdTypeToString(c.cmd) << std::endl;
+		LOG_INFO << cmdTypeToString(c.cmd) << ":" << cmdResToString(c.res);
+		if (c.res == ACK_OK) {
+			switch (c.cmd) {
+			case CREATE_OBJECT: 
+				_objectsOnServer[c.objId] = c.objType;
+				break;
+			case GET_OBJECT: {
+				LOG_INFO << "GET_OBJECT";
+				auto res = deserializeObject(c);
+				if (res)
+					LOG_INFO << "Successfully got object from server";
+				break;
+			}
+			case GET_OBJECT_MEMBER:
+				LOG_INFO << "GET_OBJECT_MEMBER res " << c.info;
+				break;
+			default:
+				LOG_INFO << "Unknown command";
+				break;
+			}
+		}
+		
 	}
 }
 
@@ -179,7 +195,7 @@ void Client::send_async(const std::string& data) {
 		switch (dwError) {
 			case ERROR_IO_PENDING:
 			{
-				std::cout << "Write operation is pending " << std::endl;
+				LOG_INFO << "Write operation is pending ";
 				break;
 			}
 			default:
@@ -188,7 +204,7 @@ void Client::send_async(const std::string& data) {
 	}
 	else {
 		d->complete = true;
-		std::cout << "Write operation completed" << std::endl;
+		LOG_INFO << "Write operation completed";
 	}
 }
 
@@ -223,6 +239,14 @@ void Client::checkPendingIO(PendingIODataPtr& d) {
 	}
 
 }
+
+void Client::printObjectsIds() {
+	LOG_INFO << "Object ids";
+	for (const auto& obj : _objectsOnServer) {
+		LOG_INFO << obj.first;
+	}
+}
+
 void Client::checkPendingOperaions() {
 	for (auto& op : _pendingOPList) {
 		checkPendingIO(op);
@@ -233,44 +257,100 @@ void Client::checkPendingOperaions() {
 		}), _pendingOPList.end());
 }
 
+CustomObjectsType Client::getObjectInfo(int id) {
+	auto it = _objectsOnServer.find(id);
+	if (it != _objectsOnServer.end()) {
+		return it->second;
+	}
+	else {
+		return UNKNOWN_OBJ;
+	}
+}
+
+void printMenu() {
+	static const std::string menu = "\n"
+		"1 quite \n"
+		"2 send simple data to server(string, int) \n"
+		"3 read (async) message from server \n"
+		"4 create object in server \n"
+		"5 print available objects ids \n"
+		"6 get object from server \n"
+		"7 call object member \n"
+		"8 check pending operations \n";
+	LOG_INFO << menu;
+}
+
 int _tmain(int argc, TCHAR* argv[])
 {
 	Client client;
 	if (!client.open("\\\\.\\pipe\\mynamedpipe")) {
-		std::cout << "Couldnt open named pipe" << std::endl;
+		LOG_ERROR << "Couldnt open named pipe";
 		return 0;
 	}
 	
 	bool run = true;
 	while (run) {
-
-		std::cout << "Choose option" << std::endl;
-		std::cout << "q - quite" << std::endl;
-		std::cout << "s - send message to server " << std::endl;
-		std::cout << "r - read message from server " << std::endl;
-		std::cout << "c - create object in server " << std::endl;
-		std::cout << "p - check pending io " << std::endl;
+		printMenu();
 
 		int c = _getch();
 		switch (c) {
-		case 'q': run = false;
+		case '1': run = false;
 			break;
-		case 's': {
+		case '2': {
 			client.send_async("Hello world");	
 			client.send_async_(30.0);
 			break;
 		}
-		case 'r': {
+		case '3': {
 			client.read_async();
 			break;
 		}
-		case 'c': {
+		case '4': {
 			struct Command cmd = {CREATE_OBJECT, CUSTOM_TYPE_1, 0};
 			std::string buffer;
 			serializeCommand(cmd, buffer);
 			client.send_async(buffer);
+			client.read_async();
 			break;
-		} case 'p': {
+		} case '5': {
+			client.printObjectsIds();
+			break;
+		}
+		case '6': {
+			LOG_INFO << "Enter obj id";
+			int id = -1;
+			std::cin >> id;
+			auto type = client.getObjectInfo(id);
+			if (type != UNKNOWN_OBJ) {
+				struct Command cmd = { GET_OBJECT, type, id };
+				std::string buffer;
+				serializeCommand(cmd, buffer);
+				client.send_async(buffer);
+				client.read_async();
+			}
+			else {
+				LOG_ERROR << "Unknown object id";
+			}
+			break;
+		}
+		case '7': {
+			LOG_INFO << "Enter obj id";
+			int id = -1;
+			std::cin >> id;
+			auto type = client.getObjectInfo(id);
+			if (type != UNKNOWN_OBJ) {
+				struct Command cmd = { GET_OBJECT_MEMBER, type, id,  UNKNOWN_RES, "getM1" };
+				std::string buffer;
+				serializeCommand(cmd, buffer);
+				client.send_async(buffer);
+				client.read_async();
+			}
+			else {
+				LOG_ERROR << "Unknown object id";
+			}
+			break;
+		}
+		case '8': {
 			client.checkPendingOperaions();
 			break;
 		}

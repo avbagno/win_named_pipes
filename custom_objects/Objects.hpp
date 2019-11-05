@@ -12,55 +12,42 @@
 
 enum CustomObjectsType  {
 	CUSTOM_TYPE_1,
-	CUSTOM_TYPE_2
+	CUSTOM_TYPE_2,
+	UNKNOWN_OBJ
 };
 
 enum CommandType {
 	CREATE_OBJECT,
 	GET_OBJECT,
 	GET_OBJECT_MEMBER,
-	
-	ACK_OK,
-	ACK_FAIL
+	UNKNOWN_CMD
 };
 
+enum CommandRes {
+	ACK_OK,
+	ACK_FAIL,
+	UNKNOWN_RES
+};
 
 inline const char* cmdTypeToString(CommandType t)
 {
-	switch (t)
-	{
+	switch (t) {
 	case CREATE_OBJECT:   return "CREATE_OBJECT";
 	case GET_OBJECT:   return "GET_OBJECT";
 	case GET_OBJECT_MEMBER: return "GET_OBJECT_MEMBER";
-	case ACK_OK: return "ACK_OK";
-	case ACK_FAIL: return "ACK_FAIL";
-	default:      return "[Unknow]";
+	default: return "Unknow";
 	}
 }
 
-
-struct Command {
-	CommandType cmd;
-
-	CustomObjectsType objType;
-	int objId;
-	std::string info;
-	//friend class boost::serialization::access;
-
-	template<class Archive>
-	void serialize(Archive& ar, const unsigned int version)
-	{
-		ar& cmd;
-		ar& objType;
-		ar& objId;
-		ar& info;
+inline const char* cmdResToString(CommandRes res) {
+	switch (res) {
+	case ACK_OK: return "ACK_OK";
+	case ACK_FAIL: return "ACK_FAIL";
+	default: return "Unknown";
 	}
-};
+}
 
-void serializeCommand(Command& cmd, std::string& out); 
-Command deserializeCommand(const std::string& in);
-
-void deserialize(const std::string& in, std::vector<Command>& out);
+static const  std::string OBJECT_SIGNATURE = "OBJECT";
 
 class CustomObject {
 public:
@@ -69,7 +56,32 @@ public:
 	virtual bool exec(const std::string& cmd, std::string& out) = 0;
 };
 
+struct Command {
+	CommandType cmd{ UNKNOWN_CMD };
+
+	CustomObjectsType objType{ UNKNOWN_OBJ };
+	int objId;
+	CommandRes res{ UNKNOWN_RES };
+	std::string info;
+
+	template<class Archive>
+	void serialize(Archive& ar, const unsigned int version)
+	{
+		ar& cmd;
+		ar& objType;
+		ar& objId;
+		ar& res;
+		ar& info;
+	}
+};
+
+void serializeCommand(Command& cmd, std::string& out); 
+Command deserializeCommand(const std::string& in);
+
+void deserialize(const std::string& in, std::vector<Command>& out);
 bool serializeObject(CustomObject* ptr, std::string& out);
+
+std::unique_ptr<CustomObject> deserializeObject(const Command& cmd);
 class CustomObject1 : public CustomObject
 {
 private:

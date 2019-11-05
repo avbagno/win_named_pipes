@@ -9,6 +9,8 @@
 #include <array>
 #include <vector>
 #include <type_traits>
+#include <map>
+#include "Objects.hpp"
 
 class Client {
 public:
@@ -28,8 +30,10 @@ public:
 		send_async(std::to_string(data));
 	}
 
-	void processServerResponse(const std::string& str);
+	void printObjectsIds();
+	CustomObjectsType getObjectInfo(int id);
 private:
+	void processServerResponse(const std::string& str);
 	enum class PendingIOType {
 		READ,
 		WRITE
@@ -47,4 +51,6 @@ private:
 	void checkPendingIO(PendingIODataPtr& data);
 	HANDLE _pipe = INVALID_HANDLE_VALUE;
 	HANDLE _connectEvent = INVALID_HANDLE_VALUE;
+
+	std::map<int, CustomObjectsType> _objectsOnServer; // objects created on server, pair id and CustomObjectsType
 };

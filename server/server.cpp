@@ -3,11 +3,18 @@
 #include <signal.h>
 
 #include "Objects.hpp"
+#include "../common/logging.hpp"
 
 int Server::_connection_id = 0;
-int Server::PipeInst::_object_id = 0;
+int Server::ClientData::_object_id = 0;
+
+Server::~Server() {
+	LOG_INFO << "Destructor";
+}
 
 void Server::PipeInstDeleter::operator()(PipeInst* p_inst) const {
+
+	LOG_INFO << "PipeInstDeleter";
 	if (!DisconnectNamedPipe(p_inst->pipeInst))
 	{
 		printf("DisconnectNamedPipe failed with %d.\n", GetLastError());
@@ -114,22 +121,23 @@ void Server::workLoop() {
 	bool pendingIO = createAndConnectInstance();
 	while (_running) {
 		
+		LOG_INFO << "1";
 		//try get something from client
 		for (auto& p : _pipeinst_list) {
 			readFromClient(*p);
 		}
 
+		LOG_INFO << "2";
 		//check client request
 		for (auto& p : _pipeinst_list) {
 			processClientRequest(*p);
 		}
 
+		LOG_INFO << "3";
 		//send responses 
 		for (auto& p : _clientsData) {
 			while(!p.second._clientResponses.empty()) {
-				Command cmd = p.second._clientResponses.front();
-				std::string out;
-				serializeCommand(cmd, out);
+				std::string out = p.second._clientResponses.front();
 				int id = p.first;
 				auto pipe = std::find_if(_pipeinst_list.begin(), _pipeinst_list.end(), [id](const auto& p) {
 					return p->id == id;
@@ -143,6 +151,7 @@ void Server::workLoop() {
 
 		std::cout << "Wait for event " << std::endl;
 		DWORD dwWait = waitForEvent();
+		LOG_INFO << "4";
 		switch (dwWait)
 		{
 		case WAIT_OBJECT_0:
@@ -259,7 +268,7 @@ void Server::completeRead(PipeInst& pipeInst, DWORD dwErr, DWORD cbBytesRead) {
 	}
 }
 
-int Server::createNewObject(PipeInst& pipeInst, CustomObjectsType type) {
+int Server::createNewObject(ClientData& cdata, CustomObjectsType type) {
 	CustomObjPtr obj{nullptr};
 	switch (type) {
 	case CUSTOM_TYPE_1:
@@ -271,13 +280,60 @@ int Server::createNewObject(PipeInst& pipeInst, CustomObjectsType type) {
 		std::cout << "Unknown object type" << std::endl;
 		break;
 	}
-	auto it = _clientsData.find(pipeInst.id);
-	if (obj != nullptr && it != _clientsData.end()) {
-		it->second._objectsMap[pipeInst._object_id++] = std::move(obj);
-		return pipeInst._object_id - 1;
+
+	if (obj != nullptr) {
+		cdata._objectsMap[cdata._object_id++] = std::move(obj);
+		return cdata._object_id - 1;
 	}
 	return -1;
 }
+
+void Server::processCommand(ClientData& clientData, const Command cmd) {
+	Command response{ cmd.cmd, cmd.objType, cmd.objId, ACK_FAIL};
+	std::string serialized_obj("");
+	switch (cmd.cmd) {
+	case CREATE_OBJECT: {
+		int id = createNewObject(clientData, cmd.objType);
+		if (id >= 0) {
+			std::cout << "New object created, id " << id << std::endl;
+			response.res = ACK_OK;
+			response.objId = id;
+		}
+		else {
+			std::cout << "Couldn't create new object" << std::endl;
+		}
+		break;
+	}
+	case GET_OBJECT: {
+		auto itObj = clientData._objectsMap.find(cmd.objId);
+		if (itObj != clientData._objectsMap.end()) {
+			if (serializeObject(itObj->second.get(), serialized_obj)) {
+				response.res = ACK_OK;
+			}
+		}
+		break;
+	}
+	case GET_OBJECT_MEMBER: {
+		auto itObj = clientData._objectsMap.find(cmd.objId);
+		if (itObj != clientData._objectsMap.end()) {
+			std::string out;
+			if (itObj->second->exec(cmd.info, out)) {
+				response.res = ACK_OK;
+				response.info = out;
+			}
+		}
+		break;
+	}
+	default:
+		std::cout << "Unknown command" << std::endl;
+		break;
+	}
+	std::string out;
+	serializeCommand(response, out);
+	clientData._clientResponses.push(out);
+	if (!serialized_obj.empty())
+		clientData._clientResponses.push(serialized_obj);
+} 
 
 void Server::processClientRequest(PipeInst& p) {
 	auto it = _clientsData.find(p.id);
@@ -285,68 +341,16 @@ void Server::processClientRequest(PipeInst& p) {
 		std::cout << "Unknown id" << std::endl;
 		return;
 	}
-	while (!it->second._clientRequests.empty()) {
-		std::string req = it->second._clientRequests.front();
-		it->second._clientRequests.pop();
-		std::cout << "Client request " << req << std::endl;
-		try {
-			Command cmd = deserializeCommand(req);
-			Command response;
-			switch (cmd.cmd) {
-			case CREATE_OBJECT: {
-				int id = createNewObject(p, cmd.objType);
-				if (id >= 0) {
-					std::cout << "New object created, id " << id << std::endl;
-					response.cmd = ACK_OK;
-					response.objId = id;
-					response.objType = cmd.objType;
-				}
-				else {
-					response.cmd = ACK_FAIL;
-					std::cout << "Couldn't create new object" << std::endl;
-				}
-				it->second._clientResponses.push(response);
-				break;
-			}
-			case GET_OBJECT: {
-				auto itObj = it->second._objectsMap.find(cmd.objId);
-				if (itObj != it->second._objectsMap.end()) {
-					std::string out;
-					response.objId = cmd.objId;
-					
-					if (serializeObject(itObj->second.get(), out)) {
-						response.cmd = ACK_OK;
-						response.info = out;
-					}
-					else {
-						response.cmd = ACK_FAIL;
-					}
-				}
-				it->second._clientResponses.push(response);
-				break;
-			}
-			case GET_OBJECT_MEMBER: {
-				auto itObj = it->second._objectsMap.find(cmd.objId);
-				if (itObj != it->second._objectsMap.end()) {
-					std::string out;
-					if (itObj->second->exec(cmd.info, out)) {
-						response.cmd = ACK_OK;
-						response.info = out;
-					}
-					else {
-						response.cmd = ACK_FAIL;
-					}
-				}
-				it->second._clientResponses.push(response);
-				break;
-			}
-			default:
-				std::cout << "Unknown command" << std::endl;
-				break;
-			}
-		}
-		catch (const std::exception & e) {
-			std::cout << "Exeption " << e.what() << std::endl;
+	ClientData& clientData = it->second;
+	while (!clientData._clientRequests.empty()) {
+		std::string req = clientData._clientRequests.front();
+		clientData._clientRequests.pop();
+		std::cout << "Client requests " << req << std::endl;
+		std::vector<Command> cmds;
+		deserialize(req, cmds);
+
+		for (auto& cmd : cmds) {
+			processCommand(clientData, cmd);
 		}
 	}
 }
