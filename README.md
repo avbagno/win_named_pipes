@@ -8,7 +8,7 @@ Example of commands - CREATE_OBJECT, GET_OBJECT_ELEMENT.
 Object serialization is realized with boost serialization lib.
 As an example added two custom objects. 
 
-## Dependecy
+## Dependency
  - boost serialization
  - boost logging
 
@@ -17,11 +17,11 @@ As an example added two custom objects.
 1. Run server.
 2. Run client.
 3. Choose available client commands, which is
-	1 quite
-	2 send simple data to server(string, int)
-    3 read (async) message from server
-	4 create object on server 
-	5 print available objects ids
-	6 get object from server 
-	7 call object member 
-	8 check pending operations
+	- 1 quite
+	- 2 send simple data to server(string, int)
+    - 3 read (async) message from server
+	- 4 create object on server 
+	- 5 print available objects ids
+	- 6 get object from server 
+	- 7 call object member 
+	- 8 check pending operations
